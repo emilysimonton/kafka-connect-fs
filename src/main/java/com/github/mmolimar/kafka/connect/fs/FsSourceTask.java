@@ -1,11 +1,18 @@
 package com.github.mmolimar.kafka.connect.fs;
 
-import com.github.mmolimar.kafka.connect.fs.file.FileMetadata;
-import com.github.mmolimar.kafka.connect.fs.file.Offset;
-import com.github.mmolimar.kafka.connect.fs.file.reader.FileReader;
-import com.github.mmolimar.kafka.connect.fs.policy.Policy;
-import com.github.mmolimar.kafka.connect.fs.util.ReflectionUtils;
-import com.github.mmolimar.kafka.connect.fs.util.Version;
+import java.io.IOException;
+import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.ConnectException;
@@ -14,12 +21,15 @@ import org.apache.kafka.connect.source.SourceTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
+import com.github.mmolimar.kafka.connect.fs.file.FileMetadata;
+import com.github.mmolimar.kafka.connect.fs.file.Offset;
+import com.github.mmolimar.kafka.connect.fs.file.reader.FileReader;
+import com.github.mmolimar.kafka.connect.fs.policy.Policy;
+import com.github.mmolimar.kafka.connect.fs.util.ReflectionUtils;
+import com.github.mmolimar.kafka.connect.fs.util.Version;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.stream.JsonReader;
 
 public class FsSourceTask extends SourceTask {
     private static final Logger log = LoggerFactory.getLogger(FsSourceTask.class);
@@ -73,7 +83,10 @@ public class FsSourceTask extends SourceTask {
                     log.info("Processing records for file {}", metadata);
                     FileReader reader = policy.offer(metadata, context.offsetStorageReader());
                     while (reader.hasNext()) {
-                        results.add(convert(metadata, reader.currentOffset(), reader.next()));
+                        Struct readerStruct = reader.next();
+                        String topic        = getTopic(readerStruct);
+
+                        results.add(convert(metadata, reader.currentOffset(), readerStruct, topic));
                     }
                 } catch (ConnectException | IOException e) {
                     //when an exception happens reading a file, the connector continues
@@ -103,7 +116,7 @@ public class FsSourceTask extends SourceTask {
         return StreamSupport.stream(iterable.spliterator(), false);
     }
 
-    private SourceRecord convert(FileMetadata metadata, Offset offset, Struct struct) {
+    private SourceRecord convert(FileMetadata metadata, Offset offset, Struct struct, String topic) {
         return new SourceRecord(
                 new HashMap<String, Object>() {
                     {
@@ -113,10 +126,23 @@ public class FsSourceTask extends SourceTask {
                     }
                 },
                 Collections.singletonMap("offset", offset.getRecordOffset()),
-                config.getTopic(),
+                topic,
                 struct.schema(),
                 struct
         );
+    }
+
+    private String getTopic(Struct message) {
+        JsonParser jsonParser = new JsonParser();
+        StringReader reader   = new StringReader(message.get("value").toString());
+        JsonReader jsonReader = new JsonReader(reader);
+        jsonReader.setLenient(true);
+
+        JsonObject messageObject = (JsonObject) jsonParser.parse(jsonReader);
+        String     topicSuffix   = "." + messageObject.get("network").getAsString() +
+                                   "." + messageObject.get("tag").getAsString();
+
+        return config.getTopicPrefix() + topicSuffix;
     }
 
     @Override

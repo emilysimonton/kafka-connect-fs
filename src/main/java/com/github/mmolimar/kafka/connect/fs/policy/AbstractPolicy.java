@@ -62,7 +62,7 @@ abstract class AbstractPolicy implements Policy {
             Configuration fsConfig = new Configuration();
             customConfigs.entrySet().stream()
                     .filter(entry -> entry.getKey().startsWith(FsSourceTaskConfig.POLICY_PREFIX_FS))
-                    .forEach(entry -> fsConfig.set(entry.getKey().replace(FsSourceTaskConfig.POLICY_PREFIX_FS, ""),
+                    .forEach(entry -> fsConfig.set(entry.getKey().replace(FsSourceTaskConfig.POLICY_PREFIX, ""),
                             (String) entry.getValue()));
 
             Path workingDir = new Path(convert(uri));
@@ -209,8 +209,10 @@ abstract class AbstractPolicy implements Policy {
         }
 
         Map<String, Object> offset = offsetStorageReader.offset(partition);
-        if (offset != null && offset.get("offset") != null) {
-            reader.seek(() -> (Long) offset.get("offset"));
+        if ( !conf.replayFile() ) {
+            if ( offset != null && offset.get("offset") != null ) {
+                reader.seek(() -> (Long) offset.get("offset"));
+            }
         }
         return reader;
     }
